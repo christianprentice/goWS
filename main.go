@@ -3,24 +3,35 @@ package main
 import(
     "fmt"
     "io"
+    "time"
     "net/http"
     "golang.org/x/net/websocket"
 )
 
 type Server struct {
-    conn map[*websocket.Conn]bool
+    conns map[*websocket.Conn]bool
 }
 
 func NewServer() *Server {
     return &Server{
-        conn: make(map[*websocket.Conn]bool),
+        conns: make(map[*websocket.Conn]bool),
+    }
+}
+
+func (s *Server) handleWSOrderbook(ws *websocket.Conn) {
+    fmt.Println("new connsection from client to orderbook feed:", ws.RemoteAddr())
+
+    for {
+        payload := fmt.Sprintf("orderbook data -> %d\n", time.Now().UnixNano())
+        ws.Write([]byte(payload))
+        time.Sleep(time.Second * 2)
     }
 }
 
 func (s *Server) handleWS(ws *websocket.Conn) {
-    fmt.Println("new connection from client:", ws.RemoteAddr())
+    fmt.Println("new connsection from client:", ws.RemoteAddr())
 
-    s.conn[ws] = true
+    s.conns[ws] = true
 
     s.readLoop(ws)
 }
@@ -37,14 +48,25 @@ func (s *Server) readLoop(ws *websocket.Conn) {
             continue
         }
         msg := buf[:n]
-        fmt.Println(string(msg))
-        ws.Write([]byte("message sent"))
+
+        s.broadcast(msg)
+    }
+}
+
+func (s *Server) broadcast(b []byte) {
+    for ws := range s.conns {
+        go func(ws *websocket.Conn) {
+            if _, err := ws.Write(b); err != nil {
+                fmt.Println("write error:", err)
+            }
+        }(ws)
     }
 }
 
 func main() {
     server := NewServer()
     http.Handle("/ws", websocket.Handler(server.handleWS))
-    http.ListenAndServe(":4444", nil)
+    http.Handle("/orderbookfeed", websocket.Handler(server.handleWSOrderbook))
+    http.ListenAndServe(":8080", nil)
 }
 
